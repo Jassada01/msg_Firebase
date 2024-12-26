@@ -129,7 +129,23 @@
                 </div>
               </template>
               <template v-else>
-                {{ message.decryptedText }}
+                <template
+                  v-for="(part, index) in detectAndConvertLinks(
+                    message.decryptedText
+                  )"
+                  :key="index"
+                >
+                  <a
+                    v-if="part.type === 'link'"
+                    :href="part.url"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="text-info hover:underline"
+                    @click.stop
+                    >Link</a
+                  >
+                  <span v-else>{{ part.content }}</span>
+                </template>
                 <div
                   v-if="message.attached_documents?.length"
                   class="mt-2 space-y-2"
@@ -222,7 +238,10 @@
                 </div>
               </template>
             </div>
-            <div v-if="message.send_user == currentUserId" class="chat-footer opacity-50 text-xs">
+            <div
+              v-if="message.send_user == currentUserId"
+              class="chat-footer opacity-50 text-xs"
+            >
               {{ formatReadStatus(message) }}
             </div>
           </div>
@@ -402,7 +421,7 @@ const getQueryLimit = () => {
   const params = new URLSearchParams(window.location.search);
   const queryLimit = parseInt(params.get("ql"));
   // Return custom limit if valid, otherwise return default 5
-  return !isNaN(queryLimit) && queryLimit > 0 ? queryLimit : 5;
+  return !isNaN(queryLimit) && queryLimit > 0 ? queryLimit : 8;
 };
 
 // เพิ่ม ref สำหรับรูปที่เลือก
@@ -563,10 +582,43 @@ const formatTime = (timestamp) => {
   });
 };
 
+// First, add this utility function somewhere in your script section
+const detectAndConvertLinks = (text) => {
+  // Regular expression for detecting URLs
+  const urlRegex = /(https?:\/\/[^\s<]+[^<.,:;"')\]\s])/g;
+
+  // Split text into parts - URLs and non-URLs
+  const parts = text.split(urlRegex);
+  const matches = text.match(urlRegex) || [];
+
+  // Combine parts with styled links
+  let result = [];
+  parts.forEach((part, index) => {
+    if (matches.includes(part)) {
+      // If part is a URL, wrap it in a styled link
+      result.push({
+        type: "link",
+        content: part,
+        url: part,
+      });
+    } else if (part) {
+      // If part is regular text, keep it as is
+      result.push({
+        type: "text",
+        content: part,
+      });
+    }
+  });
+
+  return result;
+};
+
 // Methods
 // ปรับปรุงฟังก์ชัน toggleMessageDecryption
 const toggleMessageDecryption = async (messageId) => {
   const message = messages.value.find((m) => m.id === messageId);
+  const thisMSGsendingUser = message.send_user;
+  console.log(message);
   if (!message) return;
 
   // ถ้าเคยถอดรหัสแล้ว ไม่ต้องทำอะไร
@@ -591,7 +643,12 @@ const toggleMessageDecryption = async (messageId) => {
       decryptedMessageIds.value.add(messageId);
 
       // อัพเดท read_date
-      await markAsRead(messageId);
+      const isFromOtherUser = thisMSGsendingUser !== props.currentUserId;
+      const isUnread = message.read_date === null;
+
+      if (isFromOtherUser && isUnread) {
+        await markAsRead(messageId);
+      }
 
       // ถอดรหัสไฟล์แนบ
       if (message.attached_documents && message.attached_documents.length > 0) {
