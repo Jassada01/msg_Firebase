@@ -13,7 +13,7 @@
           >
             Jubx
           </span>
-          <span class="text-[10px] text-base-content/50 -mt-1">v3.0.2</span>
+          <span class="text-[10px] text-base-content/50 -mt-1">v3.0.3</span>
         </div>
 
         <!-- Divider -->
@@ -75,6 +75,10 @@
           style="max-height: calc(100vh - 200px)"
           ref="messageContainer"
         >
+          <!-- Loading Animation -->
+          <template v-if="isInitialLoading">
+            <LoadingAnimation />
+          </template>
           <div
             v-for="message in messages"
             :key="message.id"
@@ -361,6 +365,7 @@ import { db } from "../firebase";
 import SessionTimer from "./SessionTimer.vue";
 import LastLoginStatus from "./LastLoginStatus.vue";
 import { useOnlineStatus } from "../composables/useOnlineStatus";
+import LoadingAnimation from "./LoadingAnimation.vue";
 
 import {
   collection,
@@ -418,6 +423,9 @@ const uploadProgress = ref(0);
 const isLoading = ref(false);
 // เพิ่ม ref สำหรับเก็บสถานะการถอดรหัส
 const decryptedMessageIds = ref(new Set());
+
+// เพิ่ม ref สำหรับ loading state
+const isInitialLoading = ref(true);
 
 // Add this function to get URL parameters
 const getQueryLimit = () => {
@@ -710,6 +718,7 @@ onMounted(() => {
 
   // Create unsubscribe function
   const unsubscribe = onSnapshot(q, (snapshot) => {
+    isInitialLoading.value = false; // ปิด loading เมื่อโหลดข้อมูลเสร็จ
     messages.value = snapshot.docs
       .map((doc) => {
         const messageId = doc.id;
