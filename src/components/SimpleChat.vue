@@ -7,12 +7,13 @@
       <!-- Logo and Status Section -->
       <div class="flex-1 flex items-center gap-4">
         <!-- Logo -->
-        <div class="flex items-center gap-2">
+        <div class="flex flex-col items-start gap-0">
           <span
-            class="text-lg sm:text-xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent"
+            class="text-lg sm:text-xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent leading-tight"
           >
             Jubx
           </span>
+          <span class="text-[10px] text-base-content/50 -mt-1">v3.0.2</span>
         </div>
 
         <!-- Divider -->
@@ -354,11 +355,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick } from "vue";
+// 1. Update imports at the top of the file
+import { ref, onMounted, onUnmounted, nextTick } from "vue";
 import { db } from "../firebase";
-import SessionTimer from "./SessionTimer.vue"; // เพิ่ม import
+import SessionTimer from "./SessionTimer.vue";
 import LastLoginStatus from "./LastLoginStatus.vue";
-import { useOnlineStatus } from "../composables/useOnlineStatus"; // เพิ่มบรรทัดนี้
+import { useOnlineStatus } from "../composables/useOnlineStatus";
 
 import {
   collection,
@@ -371,6 +373,7 @@ import {
   serverTimestamp,
   limit,
 } from "firebase/firestore";
+
 import { encryptMessage, decryptMessage } from "../utils/encryption";
 import {
   extractFilenameFromUrl,
@@ -691,13 +694,12 @@ const toggleMessageDecryption = async (messageId) => {
 
 const formatReadStatus = (message) => {
   if (!message.read_date) {
-    return `ส่งแล้ว`;
+    return "";
   }
   return `อ่านแล้ว ${formatTime(message.read_date)}`;
 };
 
-// Update the onMounted section
-// ปรับปรุง onMounted section
+// 2. Updated onMounted section with cleanup
 onMounted(() => {
   const messageLimit = getQueryLimit();
   const q = query(
@@ -706,17 +708,19 @@ onMounted(() => {
     limit(messageLimit)
   );
 
-  onSnapshot(q, (snapshot) => {
+  // Create unsubscribe function
+  const unsubscribe = onSnapshot(q, (snapshot) => {
     messages.value = snapshot.docs
       .map((doc) => {
         const messageId = doc.id;
         const data = doc.data();
-        // ตรวจสอบว่าข้อความนี้เคยถอดรหัสไว้หรือไม่
+
+        // Check if message was previously decrypted
         const isDecrypted = decryptedMessageIds.value.has(messageId);
         let decryptedText = "";
         let decryptedAttachments = null;
 
-        // ถ้าเคยถอดรหัสแล้ว ให้ถอดรหัสใหม่อีกครั้ง
+        // Re-decrypt if previously decrypted
         if (isDecrypted && pin.value) {
           try {
             decryptedText = decryptMessage(data.message, pin.value);
@@ -758,6 +762,11 @@ onMounted(() => {
       .reverse();
 
     scrollToBottom();
+  });
+
+  // Cleanup subscription when component unmounts
+  onUnmounted(() => {
+    unsubscribe();
   });
 });
 </script>
