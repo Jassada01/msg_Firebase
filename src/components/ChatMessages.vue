@@ -52,6 +52,7 @@
           :class="[
             { 'chat-bubble-primary': message.send_user === currentUserId },
             { 'shake-animation': message.decryptError },
+            { 'opacity-50': !message.isDecrypted && message.decryptError }  // เพิ่มบรรทัดนี้
           ]"
           @click="toggleMessageDecryption(message.id)"
           tabindex="0"
@@ -135,7 +136,15 @@
                     :alt="doc.filename || 'Attached image'"
                     class="w-32 h-32 object-cover rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
                     @load="handleImageLoad(doc.id)"
-                    @click="$emit('select-image', doc.decryptedUrl)"
+                    @click="
+                      $emit(
+                        'select-image',
+                        message.attached_documents.map(
+                          (doc) => doc.decryptedUrl
+                        ),
+                        index
+                      )
+                    "
                     :class="{ hidden: imageLoadingStates[doc.id] }"
                   />
                 </div>
@@ -257,14 +266,18 @@ const isOtherUserTyping = computed(() => {
 });
 
 // Watch for changes in messages
-watch(() => props.messages, (newMessages, oldMessages) => {
-  // เช็คว่ามีข้อความใหม่เพิ่มเข้ามาไหม
-  if (!oldMessages || newMessages.length > oldMessages.length) {
-    nextTick(() => {
-      scrollToBottom();
-    });
-  }
-}, { deep: true });
+watch(
+  () => props.messages,
+  (newMessages, oldMessages) => {
+    // เช็คว่ามีข้อความใหม่เพิ่มเข้ามาไหม
+    if (!oldMessages || newMessages.length > oldMessages.length) {
+      nextTick(() => {
+        scrollToBottom();
+      });
+    }
+  },
+  { deep: true }
+);
 
 // Watch for changes in typing status
 watch(isOtherUserTyping, (newValue) => {
@@ -340,16 +353,29 @@ const extractFilenameFromUrl = (url) => {
 };
 
 const toggleMessageDecryption = async (messageId) => {
-  const message = props.messages.find((m) => m.id === messageId);
-  const thisMSGsendingUser = message.send_user;
-  if (!message) return;
+  //console.log("Attempting to decrypt message:", messageId);
+  //console.log("Current PIN:", props.pin);
 
-  if (decryptedMessageIds.value.has(messageId)) {
+  const message = props.messages.find((m) => m.id === messageId);
+  const thisMSGsendingUser = message?.send_user;
+
+  //console.log("Message found:", message);
+
+  if (!message) {
+    console.error("Message not found");
+    return;
+  }
+
+  // ถ้าเคยถอดรหัสแล้วและสำเร็จ ให้ return
+  if (message.isDecrypted && decryptedMessageIds.value.has(messageId)) {
+    //console.log("Message already decrypted successfully");
     return;
   }
 
   try {
+    // ตรวจสอบ PIN
     if (!props.pin || props.pin.length !== 4) {
+      console.error("Invalid PIN");
       message.decryptError = true;
       setTimeout(() => {
         message.decryptError = false;
@@ -357,55 +383,77 @@ const toggleMessageDecryption = async (messageId) => {
       return;
     }
 
+    // พยายามถอดรหัสข้อความ
+    //console.log("Attempting decryption with PIN:", props.pin);
     const decrypted = decryptMessage(message.message, props.pin);
-    console.log(message);
-    if (decrypted) {
-      message.decryptedText = decrypted.trim() === " " ? "" : decrypted;
-      message.isDecrypted = true;
-      decryptedMessageIds.value.add(messageId);
+    //console.log("Decryption result:", decrypted ? "Success" : "Failed");
 
-      const isFromOtherUser = thisMSGsendingUser !== props.currentUserId;
-      const isUnread = message.read_date === null;
+    if (!decrypted) {
+      throw new Error("Decryption failed - null or empty result");
+    }
 
-      if (isFromOtherUser && isUnread) {
-        await markAsRead(messageId);
-      }
+    // ถอดรหัสสำเร็จ - อัพเดตข้อความ
+    message.decryptedText = decrypted.trim() === " " ? "" : decrypted;
+    message.isDecrypted = true;
+    decryptedMessageIds.value.add(messageId);
 
-      if (message.attached_documents?.length) {
-        message.attached_documents = message.attached_documents.map(
-          (doc, index) => {
-            try {
-              const decryptedUrl = decryptMessage(doc, props.pin);
-              const docId = `${messageId}-${index}`;
-              imageLoadingStates.value[docId] = true;
-              console.log("Decrypted URL:", decryptedUrl); // เช็ค URL ที่ถอดรหัสได้
-              console.log("Is Image:", isImage(decryptedUrl)); // เช็คว่า function isImage return อะไร
+    // ตรวจสอบและอัพเดตสถานะการอ่าน
+    const isFromOtherUser = thisMSGsendingUser !== props.currentUserId;
+    const isUnread = message.read_date === null;
 
-              return {
-                id: docId,
-                decryptedUrl,
-                filename: extractFilenameFromUrl(decryptedUrl),
-              };
-            } catch (error) {
-              console.error("Error decrypting attachment:", error);
-              return {
-                id: `${messageId}-${index}`,
-                decryptedUrl: null,
-                filename: "Decryption failed",
-              };
-            }
+    if (isFromOtherUser && isUnread) {
+      await markAsRead(messageId);
+    }
+
+    // ถ้ามีไฟล์แนบ ให้ถอดรหัสด้วย
+    if (message.attached_documents?.length) {
+      message.attached_documents = message.attached_documents.map(
+        (doc, index) => {
+          try {
+            const decryptedUrl = decryptMessage(doc, props.pin);
+            const docId = `${messageId}-${index}`;
+            imageLoadingStates.value[docId] = true;
+
+            console.log("Document decryption:", {
+              docId,
+              decryptedUrl,
+              isImage: isImage(decryptedUrl),
+            });
+
+            return {
+              id: docId,
+              decryptedUrl,
+              filename: extractFilenameFromUrl(decryptedUrl),
+            };
+          } catch (error) {
+            console.error("Error decrypting attachment:", error, {
+              messageId,
+              documentIndex: index,
+            });
+
+            return {
+              id: `${messageId}-${index}`,
+              decryptedUrl: null,
+              filename: "Decryption failed",
+              error: error.message,
+            };
           }
-        );
-      }
-    } else {
-      message.decryptError = true;
-      setTimeout(() => {
-        message.decryptError = false;
-      }, 1000);
+        }
+      );
     }
   } catch (error) {
-    console.error("Decryption error:", error);
+    console.error("Decryption error:", error, {
+      messageId,
+      pin: props.pin,
+      messageContent: message.message,
+    });
+
+    // รีเซ็ตสถานะเมื่อเกิดข้อผิดพลาด
     message.decryptError = true;
+    message.isDecrypted = false;
+    decryptedMessageIds.value.delete(messageId);
+
+    // แสดง animation error
     setTimeout(() => {
       message.decryptError = false;
     }, 1000);

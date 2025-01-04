@@ -4,9 +4,10 @@
     class="flex-1 w-full max-w-[100%] sm:max-w-[640px] lg:max-w-[768px] xl:max-w-[1024px] mx-auto p-2 sm:p-4 overflow-hidden"
   >
     <ImageViewerModal
-      v-if="selectedImage"
-      :image-url="selectedImage"
-      @close="selectedImage = null"
+      v-if="selectedImages.length > 0"
+      :images="selectedImages"
+      :initial-index="selectedImageIndex"
+      @close="closeImageViewer"
     />
     <div class="h-full rounded-lg shadow-xl flex flex-col">
       <!-- Chat messages -->
@@ -101,6 +102,8 @@
 import { ref, onMounted, onUnmounted, computed, watch } from "vue";
 import { db } from "../firebase";
 import ChatMessages from "./ChatMessages.vue";
+import { isImage } from '../utils/file-utils';
+
 import {
   collection,
   addDoc,
@@ -133,7 +136,8 @@ const uploadError = ref(null);
 import ImageViewerModal from "./ImageViewerModal.vue";
 
 // เพิ่ม ref สำหรับเก็บ URL รูปที่เลือก
-const selectedImage = ref(null);
+const selectedImages = ref([]);
+const selectedImageIndex = ref(0);
 
 const props = defineProps({
   currentUserId: {
@@ -195,6 +199,12 @@ const getQueryLimit = () => {
   const queryLimit = parseInt(params.get("ql"));
   return !isNaN(queryLimit) && queryLimit > 0 ? queryLimit : 8;
 };
+
+const closeImageViewer = () => {
+  selectedImages.value = [];
+  selectedImageIndex.value = 0;
+};
+
 
 const uploadFile = async (file, index) => {
   if (!props.pin || props.pin.length !== 4) {
@@ -323,11 +333,19 @@ const sendMessage = async () => {
   }
 };
 
-const handleImageSelect = (imageUrl) => {
-  // Emit event to parent component or handle image selection
-  console.log("Selected image:", imageUrl);
-  selectedImage.value = imageUrl;
-
+// แก้ไขฟังก์ชัน handleImageSelect
+const handleImageSelect = (urls, index) => {
+  // กรองเอาเฉพาะ URL ที่เป็นรูปภาพ
+  const imageUrls = urls.filter(url => isImage(url));
+  
+  // หา index ใหม่หลังจากกรองแล้ว
+  const newIndex = imageUrls.indexOf(urls[index]);
+  
+  // ส่งข้อมูลไป ImageViewerModal เฉพาะรูปภาพ
+  if (imageUrls.length > 0 && newIndex !== -1) {
+    selectedImages.value = imageUrls;
+    selectedImageIndex.value = newIndex;
+  }
 };
 
 // Separate onMounted and onUnmounted
