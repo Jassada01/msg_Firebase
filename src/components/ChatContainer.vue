@@ -124,6 +124,8 @@ import {
 import UploadModal from "./UploadModal.vue";
 
 import { setDoc, doc as firestoreDoc } from "firebase/firestore";
+import { resizeImage } from '../utils/file-utils';
+
 
 // refs สำหรับ upload
 const isUploading = ref(false);
@@ -257,7 +259,8 @@ const uploadFile = async (file, index) => {
     );
   });
 };
-// Update file handling
+
+// Modify the handleFileUpload function
 const handleFileUpload = async (event) => {
   try {
     const files = Array.from(event.target.files);
@@ -267,22 +270,32 @@ const handleFileUpload = async (event) => {
     uploadingFiles.value = files;
     uploadError.value = null;
 
-    // เริ่มต้นค่าสถานะสำหรับแต่ละไฟล์
-    files.forEach((_, index) => {
+    // Process each file - resize images if needed
+    const processedFiles = await Promise.all(
+      files.map(async (file) => {
+        if (file.type.startsWith('image/')) {
+          return await resizeImage(file);
+        }
+        return file;
+      })
+    );
+
+    // Initialize progress and status for each file
+    processedFiles.forEach((_, index) => {
       fileProgress.value[index] = 0;
       fileStatus.value[index] = "waiting";
     });
 
-    // อัพโหลดทีละไฟล์
-    const uploadPromises = files.map((file, index) => uploadFile(file, index));
+    // Upload processed files
+    const uploadPromises = processedFiles.map((file, index) => uploadFile(file, index));
     const urls = await Promise.all(uploadPromises);
 
-    // เพิ่มไฟล์ที่อัพโหลดเสร็จแล้วไปยัง newMessage
+    // Add uploaded files to newMessage
     newMessage.value.files = [
       ...newMessage.value.files,
-      ...files.map((file, index) => ({
+      ...processedFiles.map((file, index) => ({
         file,
-        name: file.name, // เพิ่ม name
+        name: file.name,
         url: urls[index],
       })),
     ];
@@ -291,6 +304,9 @@ const handleFileUpload = async (event) => {
     uploadError.value = "เกิดข้อผิดพลาดในการอัพโหลดไฟล์";
   }
 };
+
+
+
 const removeFile = (index) => {
   newMessage.value.files = newMessage.value.files.filter((_, i) => i !== index);
 };
