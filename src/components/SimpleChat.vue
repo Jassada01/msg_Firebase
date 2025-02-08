@@ -9,7 +9,7 @@
           <span class="text-lg sm:text-xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent leading-tight">
             Jubx
           </span>
-          <span class="text-[10px] text-base-content/50 -mt-1">v3.0.7c</span>
+          <span class="text-[10px] text-base-content/50 -mt-1">v3.0.7f</span>
         </div>
 
         <!-- Divider -->

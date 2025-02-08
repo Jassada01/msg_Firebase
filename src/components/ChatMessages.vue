@@ -41,23 +41,42 @@
             />
           </div>
         </div>
-        <div class="chat-header text-xs sm:text-sm">
+        <div
+          class="chat-header text-xs sm:text-sm"
+          v-if="
+            shouldShowTime(
+              message,
+              messageGroup.messages,
+              messageGroup.messages.indexOf(message)
+            )
+          "
+        >
           {{ message.send_user === currentUserId ? "Me" : "You" }}
-          <time class="text-xs opacity-50">{{
-            formatTime(message.send_date)
-          }}</time>
+          <time class="text-xs opacity-50">
+            {{ formatTime(message.send_date) }}
+          </time>
         </div>
+
+        <!-- อัพเดต class binding ใน chat-bubble -->
         <div
           class="chat-bubble text-sm sm:text-base whitespace-pre-wrap cursor-pointer select-none text-left"
           :class="[
             { 'chat-bubble-primary': message.send_user === currentUserId },
             { 'shake-animation': message.decryptError },
-            { 'opacity-50': !message.isDecrypted && message.decryptError }  // เพิ่มบรรทัดนี้
+            { 'opacity-50': !message.isDecrypted && message.decryptError },
+            { 'cursor-not-allowed': isDecrypting.has(message.id) },
           ]"
           @click="toggleMessageDecryption(message.id)"
-          tabindex="0"
-          @keyup.enter="toggleMessageDecryption(message.id)"
+          :tabindex="isMobile ? null : '0'"
+          @keyup.enter="!isMobile && toggleMessageDecryption(message.id)"
         >
+          <!-- เพิ่มสถานะ loading ระหว่าง decrypt -->
+          <template v-if="isDecrypting.has(message.id)">
+            <div class="flex items-center gap-2">
+              <span class="loading loading-spinner loading-xs"></span>
+              <span>Decrypting...</span>
+            </div>
+          </template>
           <template v-if="!message.isDecrypted">
             <div class="flex items-center gap-2">
               <svg
@@ -234,6 +253,12 @@ import {
 
 import { collection, query, onSnapshot } from "firebase/firestore";
 
+// เพิ่ม reactive variable สำหรับเช็คว่าเป็น mobile หรือไม่
+const isMobile = ref(false);
+
+// เพิ่ม state ใหม่เพื่อเก็บข้อมูลที่ decrypt แล้ว
+const decryptedMessages = ref(new Map());
+
 const props = defineProps({
   messages: {
     type: Array,
@@ -259,6 +284,9 @@ const imageLoadingStates = ref({});
 const decryptedMessageIds = ref(new Set());
 // Add new ref for typing status
 const typingUsers = ref({});
+
+// เพิ่ม ref ใหม่เพื่อติดตามสถานะการ decrypt
+const isDecrypting = ref(new Set());
 
 // Computed property to check if someone is typing
 const isOtherUserTyping = computed(() => {
@@ -308,14 +336,15 @@ const formatDateSeparator = (date) => {
 };
 
 // Group messages by date
+// แก้ computed property groupedMessages ให้ใช้ displayMessages
 const groupedMessages = computed(() => {
-  if (!props.messages.length) return [];
+  if (!displayMessages.value.length) return [];
 
   const groups = [];
   let currentDate = null;
   let currentGroup = null;
 
-  props.messages.forEach((message) => {
+  displayMessages.value.forEach((message) => {
     const messageDate = new Date(
       message.send_date?.seconds * 1000 || Date.now()
     );
@@ -335,7 +364,6 @@ const groupedMessages = computed(() => {
 
   return groups;
 });
-
 const handleImageLoad = (docId) => {
   imageLoadingStates.value[docId] = false;
 };
@@ -353,84 +381,44 @@ const extractFilenameFromUrl = (url) => {
 };
 
 const toggleMessageDecryption = async (messageId) => {
-  //console.log("Attempting to decrypt message:", messageId);
-  //console.log("Current PIN:", props.pin);
+  if (isDecrypting.value.has(messageId)) {
+    return;
+  }
 
   const message = props.messages.find((m) => m.id === messageId);
-  const thisMSGsendingUser = message?.send_user;
-
-  //console.log("Message found:", message);
-
-  if (!message) {
-    console.error("Message not found");
-    return;
-  }
-
-  // ถ้าเคยถอดรหัสแล้วและสำเร็จ ให้ return
-  if (message.isDecrypted && decryptedMessageIds.value.has(messageId)) {
-    //console.log("Message already decrypted successfully");
-    return;
-  }
+  if (!message) return;
 
   try {
-    // ตรวจสอบ PIN
-    if (!props.pin || props.pin.length !== 4) {
-      console.error("Invalid PIN");
-      message.decryptError = true;
-      setTimeout(() => {
-        message.decryptError = false;
-      }, 1000);
+    isDecrypting.value.add(messageId);
+
+    // ถ้าเคย decrypt แล้วให้ใช้ค่าเดิม
+    if (decryptedMessages.value.has(messageId)) {
       return;
     }
 
-    // พยายามถอดรหัสข้อความ
-    //console.log("Attempting decryption with PIN:", props.pin);
     const decrypted = decryptMessage(message.message, props.pin);
-    //console.log("Decryption result:", decrypted ? "Success" : "Failed");
+    if (!decrypted) throw new Error("Decryption failed");
 
-    if (!decrypted) {
-      throw new Error("Decryption failed - null or empty result");
-    }
+    // เก็บข้อมูลที่ decrypt แล้วใน local state แทนการแก้ไข prop
+    decryptedMessages.value.set(messageId, {
+      text: decrypted.trim() === " " ? "" : decrypted,
+      isDecrypted: true,
+      attachments: [], // จะเติมข้อมูล attachments ที่ decrypt แล้วที่หลัง
+    });
 
-    // ถอดรหัสสำเร็จ - อัพเดตข้อความ
-    message.decryptedText = decrypted.trim() === " " ? "" : decrypted;
-    message.isDecrypted = true;
-    decryptedMessageIds.value.add(messageId);
-
-    // ตรวจสอบและอัพเดตสถานะการอ่าน
-    const isFromOtherUser = thisMSGsendingUser !== props.currentUserId;
-    const isUnread = message.read_date === null;
-
-    if (isFromOtherUser && isUnread) {
-      await markAsRead(messageId);
-    }
-
-    // ถ้ามีไฟล์แนบ ให้ถอดรหัสด้วย
+    // Handle attachments
     if (message.attached_documents?.length) {
-      message.attached_documents = message.attached_documents.map(
-        (doc, index) => {
+      const attachments = await Promise.all(
+        message.attached_documents.map(async (doc, index) => {
           try {
             const decryptedUrl = decryptMessage(doc, props.pin);
-            const docId = `${messageId}-${index}`;
-            imageLoadingStates.value[docId] = true;
-
-            console.log("Document decryption:", {
-              docId,
-              decryptedUrl,
-              isImage: isImage(decryptedUrl),
-            });
-
             return {
-              id: docId,
+              id: `${messageId}-${index}`,
               decryptedUrl,
               filename: extractFilenameFromUrl(decryptedUrl),
             };
           } catch (error) {
-            console.error("Error decrypting attachment:", error, {
-              messageId,
-              documentIndex: index,
-            });
-
+            console.error("Error decrypting attachment:", error);
             return {
               id: `${messageId}-${index}`,
               decryptedUrl: null,
@@ -438,27 +426,43 @@ const toggleMessageDecryption = async (messageId) => {
               error: error.message,
             };
           }
-        }
+        })
       );
+
+      // Update attachments in local state
+      const messageData = decryptedMessages.value.get(messageId);
+      messageData.attachments = attachments;
+      decryptedMessages.value.set(messageId, messageData);
+    }
+
+    // Handle read status
+    const isFromOtherUser = message.send_user !== props.currentUserId;
+    const isUnread = message.read_date === null;
+    if (isFromOtherUser && isUnread) {
+      await markAsRead(messageId);
     }
   } catch (error) {
-    console.error("Decryption error:", error, {
-      messageId,
-      pin: props.pin,
-      messageContent: message.message,
-    });
-
-    // รีเซ็ตสถานะเมื่อเกิดข้อผิดพลาด
-    message.decryptError = true;
-    message.isDecrypted = false;
-    decryptedMessageIds.value.delete(messageId);
-
-    // แสดง animation error
-    setTimeout(() => {
-      message.decryptError = false;
-    }, 1000);
+    console.error("Decryption error:", error);
+    decryptedMessages.value.delete(messageId);
+  } finally {
+    isDecrypting.value.delete(messageId);
   }
 };
+
+// Computed property เพื่อรวมข้อมูลจาก props และ state
+const displayMessages = computed(() => {
+  return props.messages.map((message) => {
+    const decryptedData = decryptedMessages.value.get(message.id);
+    if (!decryptedData) return message;
+
+    return {
+      ...message,
+      decryptedText: decryptedData.text,
+      isDecrypted: decryptedData.isDecrypted,
+      attached_documents: decryptedData.attachments,
+    };
+  });
+});
 
 const markAsRead = async (messageId) => {
   try {
@@ -477,10 +481,39 @@ const scrollToBottom = () => {
   }
 };
 
+// Add this helper function
+const shouldShowTime = (message, messages, currentIndex) => {
+  if (currentIndex === 0) return true;
+
+  const previousMessage = messages[currentIndex - 1];
+
+  // Check if messages are from the same user
+  if (previousMessage.send_user !== message.send_user) return true;
+
+  // Convert timestamps to milliseconds
+  const currentTime = message.send_date?.seconds * 1000 || Date.now();
+  const previousTime = previousMessage.send_date?.seconds * 1000 || Date.now();
+
+  // Check if difference is more than 3 minutes (180000 milliseconds)
+  return currentTime - previousTime > 180000;
+};
+
 onMounted(() => {
+  const checkMobile = () => {
+    isMobile.value =
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+        navigator.userAgent
+      );
+  };
+
+  // เช็คตอน mount และเมื่อ resize
+  checkMobile();
+  window.addEventListener("resize", checkMobile);
+
   scrollToBottom();
   // Add typing status listener
   const typingQuery = query(collection(db, "typing_status"));
+  // Inside the onSnapshot callback, update this section:
   const unsubscribeTyping = onSnapshot(typingQuery, (snapshot) => {
     snapshot.docChanges().forEach((change) => {
       const userId = change.doc.id;
@@ -489,7 +522,14 @@ onMounted(() => {
           delete typingUsers.value[userId];
         } else {
           const data = change.doc.data();
-          typingUsers.value[userId] = data.isTyping;
+          const currentTime = Math.floor(Date.now() / 1000); // Convert to seconds
+          const timestampSeconds = data.timestamp?.seconds || 0;
+
+          // Check if timestamp is more than 1 minute old
+          const isExpired = currentTime - timestampSeconds > 60;
+
+          // Set typing status to false if expired, otherwise use the actual status
+          typingUsers.value[userId] = isExpired ? false : data.isTyping;
         }
       }
     });
@@ -497,6 +537,7 @@ onMounted(() => {
 
   // Clean up listener on unmount
   onUnmounted(() => {
+    window.removeEventListener("resize", checkMobile);
     unsubscribeTyping();
   });
 });
